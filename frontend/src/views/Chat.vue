@@ -310,41 +310,107 @@ const newChat = () => {
   messages.value = []
 }
 
+const getToken = () => localStorage.getItem('token')
+
 const sendMessage = async () => {
   if (!inputQuery.value.trim()) return
-  
+
   const query = inputQuery.value
   messages.value.push({ role: 'user', content: query })
   inputQuery.value = ''
   scrollToBottom()
-  
+
+  const payload = {
+    query: query,
+    session_id: currentSessionId.value,
+  }
+  if (selectedAssistant.value) {
+    payload.assistant_id = selectedAssistant.value
+  } else if (selectedKB.value) {
+    payload.kb_id = selectedKB.value
+  }
+
+  // Try streaming endpoint first
+  let usedStreaming = false
   try {
-    const payload = {
-      query: query,
-      session_id: currentSessionId.value,
-    }
-    
-    if (selectedAssistant.value) {
-      payload.assistant_id = selectedAssistant.value
-    } else if (selectedKB.value) {
-      payload.kb_id = selectedKB.value
-    }
-    
-    const res = await api.post('/chat/', payload)
-    
-    currentSessionId.value = res.data.session_id
-    messages.value.push({ 
-      role: 'assistant', 
-      content: res.data.answer,
-      sources: res.data.source_documents
+    const response = await fetch('/api/v1/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`,
+      },
+      body: JSON.stringify(payload),
     })
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+    usedStreaming = true
+    const assistantMsg = { role: 'assistant', content: '' }
+    messages.value.push(assistantMsg)
     scrollToBottom()
-    if (!sessions.value.find(s => s.session_uid === res.data.session_id)) {
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() || ''
+
+      for (const part of parts) {
+        if (!part.startsWith('data: ')) continue
+        try {
+          const data = JSON.parse(part.slice(6))
+          if (data.type === 'token') {
+            const lastIdx = messages.value.length - 1
+            messages.value[lastIdx].content += data.content
+            scrollToBottom()
+          } else if (data.type === 'session_id') {
+            currentSessionId.value = data.session_id
+          } else if (data.type === 'sources') {
+            const lastIdx = messages.value.length - 1
+            messages.value[lastIdx].sources = data.data
+          } else if (data.type === 'error') {
+            const lastIdx = messages.value.length - 1
+            messages.value[lastIdx].content = `Error: ${data.message}`
+          }
+        } catch (e) {
+          // ignore parse errors for incomplete chunks
+        }
+      }
+    }
+
+    if (!sessions.value.find(s => s.session_uid === currentSessionId.value)) {
       fetchSessions()
     }
   } catch (e) {
-    console.error(e)
-    messages.value.push({ role: 'system', content: 'Error sending message: ' + (e.response?.data?.detail || e.message) })
+    console.error('Streaming failed, falling back to non-streaming:', e)
+
+    // Remove placeholder if streaming started but failed
+    if (usedStreaming) {
+      messages.value.pop()
+    }
+
+    try {
+      const res = await api.post('/chat/', payload)
+      currentSessionId.value = res.data.session_id
+      messages.value.push({
+        role: 'assistant',
+        content: res.data.answer,
+        sources: res.data.source_documents,
+      })
+      scrollToBottom()
+      if (!sessions.value.find(s => s.session_uid === res.data.session_id)) {
+        fetchSessions()
+      }
+    } catch (e2) {
+      console.error(e2)
+      messages.value.push({ role: 'system', content: 'Error sending message: ' + (e2.response?.data?.detail || e2.message) })
+    }
   }
 }
 

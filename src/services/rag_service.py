@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import AsyncIterator, List, Dict, Any, Optional
 from src.retrieval.vector_retriever import VectorRetriever
 from src.retrieval.reranker import DashScopeReranker
 from src.llm.llm_client import LLMClient
@@ -135,6 +135,90 @@ class RAGService:
         self.memory.add_short_term_memory(session_id, "assistant", result["answer"])
         
         return result
+
+    async def query_stream(
+        self,
+        query_text: str,
+        top_k: int = 5,
+        session_id: str = "default",
+        kb_ids: Optional[List[int]] = None,
+        assistant_config: Optional[Dict[str, Any]] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """执行流式查询，逐 token 产出事件。
+
+        与 query() 的区别在于 LLM 生成阶段采用异步流式输出，
+        前端可实时展示每个 token。
+
+        Yields:
+            事件字典，包含以下类型:
+            - {"type": "token", "content": str} — 流式 token
+            - {"type": "sources", "data": list} — 来源文档
+            - {"type": "done"} — 流结束
+        """
+        system_prompt = assistant_config.get("system_prompt") if assistant_config else None
+        memory_config = assistant_config.get("memory_config", {}) if assistant_config else {}
+        enable_short_term = memory_config.get("enable_short_term", True)
+
+        history = []
+        if enable_short_term:
+            history = self.memory.get_short_term_memory(session_id, limit=10)
+        history_str = "\n".join([f"{m['role']}: {m['content']}" for m in history])
+
+        # 通用聊天模式（无知识库）
+        if not kb_ids:
+            context = f"历史对话:\n{history_str}" if history else ""
+            if system_prompt:
+                context = f"系统指令: {system_prompt}\n\n{context}"
+            prompt = f"You are a helpful assistant.\n\n{context}\n\nUser Question: {query_text}\n\nAnswer:"
+            async for token in self.llm_client.generate_stream(prompt):
+                yield {"type": "token", "content": token}
+            yield {"type": "done"}
+            return
+
+        # RAG 模式：检索 → 重排序 → 流式生成
+        initial_k = top_k * 2 if settings.ENABLE_RERANK else top_k
+        search_results = self.retriever.retrieve(query_text, top_k=initial_k, kb_ids=kb_ids)
+
+        if settings.ENABLE_RERANK and search_results:
+            search_results = self.reranker.rerank(query_text, search_results)
+        else:
+            search_results = search_results[:top_k]
+
+        context = self._format_context(search_results)
+        if history_str:
+            context = f"历史背景:\n{history_str}\n\n检索到的资料:\n{context}"
+        else:
+            context = f"检索到的资料:\n{context}"
+        if system_prompt:
+            context = f"系统指令: {system_prompt}\n\n{context}"
+
+        prompt = f"""基于以下上下文信息，回答问题。
+
+上下文：
+{context}
+
+问题：{query_text}
+
+要求：
+1. 基于上下文回答，不添加外部知识
+2. 如上下文无相关信息，明确说明"根据提供的信息无法回答"
+3. 引用相关段落编号
+4. 保持回答准确、简洁
+
+回答："""
+
+        async for token in self.llm_client.generate_stream(prompt):
+            yield {"type": "token", "content": token}
+
+        # 产出来源文档
+        yield {
+            "type": "sources",
+            "data": [
+                {"id": res.id, "text": res.text, "score": res.score, "metadata": res.metadata}
+                for res in search_results
+            ]
+        }
+        yield {"type": "done"}
 
     def _single_hop_query(
         self, 

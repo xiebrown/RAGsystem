@@ -116,6 +116,28 @@ class ChatInteraction(Base):
 
     session = relationship("ChatSession", back_populates="interactions")
 
+class UploadSession(Base):
+    """断点续传上传会话"""
+    __tablename__ = "upload_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    upload_uid = Column(String(36), unique=True, index=True, nullable=False)
+    filename = Column(String(255), nullable=False)
+    file_hash = Column(String(64), nullable=True)  # MD5
+    file_size = Column(Integer, nullable=False)
+    chunk_size = Column(Integer, nullable=False)
+    total_chunks = Column(Integer, nullable=False)
+    received_chunks = Column(Text, nullable=True)  # JSON list of received chunk indices
+    status = Column(String(20), default="uploading")  # uploading, completed, cancelled
+    kb_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    knowledge_base = relationship("KnowledgeBase")
+    user = relationship("User")
+
+
 class EvaluationTask(Base):
     __tablename__ = "evaluation_tasks"
 

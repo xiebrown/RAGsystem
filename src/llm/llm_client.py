@@ -1,11 +1,10 @@
-from typing import List, Optional, Tuple
+from typing import AsyncIterator, List, Optional, Tuple
 from langchain_community.chat_models import ChatTongyi
 from langchain_core.messages import HumanMessage, SystemMessage
 from src.settings import settings
 from src.utils.logger import logger
 
 import time
-from typing import List, Optional, Tuple
 
 
 class LLMClient:
@@ -79,10 +78,37 @@ class LLMClient:
             total_latency = end_time - start_time
             
             return content, first_token_latency, total_latency
-            
+
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
             return f"Error generating response: {str(e)}", 0.0, 0.0
+
+    async def generate_stream(self, prompt: str, system_prompt: Optional[str] = None) -> AsyncIterator[str]:
+        """异步流式生成响应，逐 token 产出。
+
+        Args:
+            prompt: 用户输入的提示词。
+            system_prompt: 可选的系统提示词，默认使用标准 RAG 助手提示。
+
+        Yields:
+            每个流式 token 的文本内容。
+        """
+        if not self.llm:
+            yield "LLM Service unavailable."
+            return
+
+        try:
+            sys_msg = system_prompt if system_prompt else "You are a helpful RAG assistant."
+            messages = [
+                SystemMessage(content=sys_msg),
+                HumanMessage(content=prompt)
+            ]
+            async for chunk in self.llm.astream(messages):
+                if chunk.content:
+                    yield chunk.content
+        except Exception as e:
+            logger.error(f"LLM streaming failed: {e}")
+            yield f"Error generating response: {str(e)}"
 
     def generate_response(self, query: str, context: str, system_prompt: Optional[str] = None) -> str:
         """基于RAG上下文生成回答。

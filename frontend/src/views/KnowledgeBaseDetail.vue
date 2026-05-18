@@ -9,17 +9,12 @@
     <div class="actions-bar">
       <el-upload
         class="upload-demo"
-        :action="`/api/v1/knowledge-bases/${kbId}/upload`"
-        :headers="headers"
-        multiple
-        :on-success="handleUploadSuccess"
-        :on-error="handleUploadError"
-        :on-progress="handleUploadProgress"
-        :file-list="fileList"
+        :http-request="customUpload"
         :show-file-list="false"
+        multiple
         style="display: inline-block; margin-right: 10px;"
       >
-        <el-button type="primary" icon="Upload">Batch Upload</el-button>
+        <el-button type="primary" icon="Upload">Batch Upload (Chunked)</el-button>
       </el-upload>
       
       <el-button type="warning" @click="batchRetry" :disabled="!selectedDocs.length" icon="Refresh">Batch Retry</el-button>
@@ -183,9 +178,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onUnmounted, reactive } from 'vue'
+import { ref, onMounted, onUnmounted, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
+import SparkMD5 from 'spark-md5'
 import { Back, Upload, Refresh, Delete, RefreshRight, View, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -236,9 +232,124 @@ const fileList = ref([])
 const uploadQueue = ref([])
 const activeNames = ref(['1'])
 
-const headers = computed(() => ({
-  Authorization: `Bearer ${localStorage.getItem('token')}`
-}))
+const CHUNK_SIZE = 5 * 1024 * 1024 // 5MB
+
+const computeMD5 = (file) => {
+  return new Promise((resolve, reject) => {
+    const spark = new SparkMD5.ArrayBuffer()
+    const reader = new FileReader()
+    const chunkSize = 2 * 1024 * 1024 // 2MB chunks for reading
+    let offset = 0
+
+    const loadNext = () => {
+      const slice = file.slice(offset, offset + chunkSize)
+      reader.readAsArrayBuffer(slice)
+    }
+
+    reader.onload = (e) => {
+      spark.append(e.target.result)
+      offset += chunkSize
+      if (offset < file.size) {
+        loadNext()
+      } else {
+        resolve(spark.end())
+      }
+    }
+
+    reader.onerror = () => reject(new Error('MD5 computation failed'))
+    loadNext()
+  })
+}
+
+const addToQueue = (rawFile) => {
+  const uid = rawFile.uid || rawFile.name + Date.now()
+  const existing = uploadQueue.value.find(f => f.uid === uid)
+  if (!existing) {
+    uploadQueue.value.push({ uid, name: rawFile.name, percentage: 0, status: 'pending' })
+  }
+  return uid
+}
+
+const updateQueueProgress = (uid, percentage, status) => {
+  const item = uploadQueue.value.find(f => f.uid === uid)
+  if (item) {
+    item.percentage = percentage
+    if (status) item.status = status
+  }
+}
+
+const removeFromQueue = (uid) => {
+  setTimeout(() => {
+    uploadQueue.value = uploadQueue.value.filter(f => f.uid !== uid)
+  }, 3000)
+}
+
+const customUpload = async (options) => {
+  const { file, onProgress, onSuccess, onError } = options
+  const rawFile = file.raw || file
+  const uid = addToQueue(rawFile)
+
+  try {
+    // 1. Compute MD5
+    updateQueueProgress(uid, 0, 'hashing')
+    const fileHash = await computeMD5(rawFile)
+
+    // 2. Init upload session
+    updateQueueProgress(uid, 0, 'initializing')
+    const totalChunks = Math.max(1, Math.ceil(rawFile.size / CHUNK_SIZE))
+    const initRes = await api.post(`/knowledge-bases/${kbId}/uploads/init`, {
+      filename: rawFile.name,
+      file_size: rawFile.size,
+      file_hash: fileHash,
+      chunk_size: CHUNK_SIZE,
+    })
+    const { upload_id, received_chunks } = initRes.data
+    const receivedSet = new Set(received_chunks)
+
+    // 3. Upload missing chunks
+    let uploadedBytes = 0
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE
+      const end = Math.min(start + CHUNK_SIZE, rawFile.size)
+      const chunkBlob = rawFile.slice(start, end)
+
+      if (receivedSet.has(i)) {
+        uploadedBytes += end - start
+        updateQueueProgress(uid, Math.round((uploadedBytes / rawFile.size) * 100), 'uploading')
+        continue
+      }
+
+      const formData = new FormData()
+      formData.append('chunk_index', String(i))
+      formData.append('file', chunkBlob, `chunk_${i}`)
+
+      await api.post(`/knowledge-bases/${kbId}/uploads/${upload_id}/chunk`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+
+      uploadedBytes += end - start
+      const pct = Math.round((uploadedBytes / rawFile.size) * 100)
+      updateQueueProgress(uid, pct, 'uploading')
+      onProgress({ percent: pct, total: rawFile.size, loaded: uploadedBytes })
+    }
+
+    // 4. Complete upload
+    updateQueueProgress(uid, 99, 'processing')
+    const completeRes = await api.post(`/knowledge-bases/${kbId}/uploads/${upload_id}/complete`)
+    onSuccess(completeRes.data, file)
+
+    updateQueueProgress(uid, 100, 'success')
+    ElMessage.success(`File ${rawFile.name} uploaded successfully`)
+    setTimeout(() => removeFromQueue(uid), 3000)
+    fetchDocuments()
+
+  } catch (e) {
+    console.error('Upload failed:', e)
+    updateQueueProgress(uid, 0, 'fail')
+    onError(e)
+    ElMessage.error(`File ${rawFile.name} upload failed: ${e.response?.data?.detail || e.message}`)
+  }
+}
 
 const fetchKB = async () => {
   try {
@@ -281,44 +392,6 @@ const startPolling = () => {
 onUnmounted(() => {
   if (pollInterval) clearInterval(pollInterval)
 })
-
-const handleUploadProgress = (event, file, fileList) => {
-  const existing = uploadQueue.value.find(f => f.uid === file.uid)
-  if (existing) {
-    existing.percentage = Math.round(event.percent)
-    existing.status = 'uploading'
-  } else {
-    uploadQueue.value.push({
-      uid: file.uid,
-      name: file.name,
-      percentage: Math.round(event.percent),
-      status: 'uploading'
-    })
-  }
-}
-
-const handleUploadSuccess = (response, file, fileList) => {
-  const existing = uploadQueue.value.find(f => f.uid === file.uid)
-  if (existing) {
-    existing.percentage = 100
-    existing.status = 'success'
-    // Remove from queue after a delay
-    setTimeout(() => {
-      uploadQueue.value = uploadQueue.value.filter(f => f.uid !== file.uid)
-    }, 3000)
-  }
-  ElMessage.success(`File ${file.name} uploaded successfully`)
-  fetchDocuments()
-}
-
-const handleUploadError = (err, file, fileList) => {
-  const existing = uploadQueue.value.find(f => f.uid === file.uid)
-  if (existing) {
-    existing.status = 'fail'
-    existing.percentage = 0
-  }
-  ElMessage.error(`File ${file.name} upload failed`)
-}
 
 const handleSelectionChange = (val) => {
   selectedDocs.value = val

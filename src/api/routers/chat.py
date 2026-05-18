@@ -1,14 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any
 from pydantic import BaseModel
+import json
 import uuid
 
-from src.database.sql_session import get_db
+from src.database.sql_session import get_db, SessionLocal
 from src.database.models import ChatSession, ChatInteraction, User, KnowledgeBase, Assistant
 from src.services.rag_service import RAGService
 from src.services.memory_service import MemorySystem
 from src.api.dependencies import get_current_user
+from src.utils.logger import logger
 
 router = APIRouter()
 rag_service = RAGService()
@@ -165,6 +168,137 @@ def chat(
         query=request.query,
         answer=result["answer"],
         source_documents=result.get("source_documents", [])
+    )
+
+
+@router.post("/stream")
+async def chat_stream(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    SSE 流式聊天接口
+
+    与 POST / 返回 JSON 不同，此接口使用 Server-Sent Events 逐 token
+    推送 LLM 生成内容，前端可实时展示打字机效果。
+    """
+    # 解析助手配置和知识库列表（同步，与非流式接口逻辑一致）
+    assistant = None
+    kb_ids = []
+
+    if request.assistant_id:
+        assistant = db.query(Assistant).filter(Assistant.id == request.assistant_id).first()
+        if not assistant:
+            raise HTTPException(status_code=404, detail="Assistant not found")
+        if assistant.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized for this assistant")
+        kb_ids = assistant.kb_ids or []
+    elif request.kb_id:
+        kb_ids = [request.kb_id]
+
+    valid_kb_ids = []
+    if kb_ids:
+        kbs = db.query(KnowledgeBase).filter(KnowledgeBase.id.in_(kb_ids)).all()
+        for kb in kbs:
+            if kb.owner_id == current_user.id or kb.is_public:
+                valid_kb_ids.append(kb.id)
+
+    # 管理会话
+    session_uid = request.session_id
+    if not session_uid:
+        session_uid = str(uuid.uuid4())
+        chat_session = ChatSession(
+            session_uid=session_uid,
+            user_id=current_user.id,
+            assistant_id=request.assistant_id,
+            title=request.query[:50]
+        )
+        db.add(chat_session)
+        db.commit()
+        db.refresh(chat_session)
+    else:
+        chat_session = db.query(ChatSession).filter(ChatSession.session_uid == session_uid).first()
+        if not chat_session:
+            chat_session = ChatSession(
+                session_uid=session_uid,
+                user_id=current_user.id,
+                assistant_id=request.assistant_id,
+                title=request.query[:50]
+            )
+            db.add(chat_session)
+            db.commit()
+            db.refresh(chat_session)
+        if chat_session.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to access this session")
+
+    assistant_config = {
+        "llm_model": assistant.llm_model if assistant else "qwen-max",
+        "temperature": assistant.temperature if assistant else 0.7,
+        "system_prompt": assistant.system_prompt if assistant else None,
+        "memory_config": assistant.memory_config if assistant else None,
+        "rag_config": assistant.rag_config if assistant else None,
+        "tool_config": assistant.tool_config if assistant else None,
+        "agent_ids": assistant.agent_ids if assistant else None
+    }
+
+    async def event_generator():
+        """SSE 事件生成器：逐 token 推送，流结束后保存交互记录。"""
+        full_answer = ""
+        source_docs = None
+
+        # 立即推送 session_id，方便前端追踪新会话
+        yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_uid}, ensure_ascii=False)}\n\n"
+
+        try:
+            async for event in rag_service.query_stream(
+                query_text=request.query,
+                top_k=request.top_k,
+                session_id=session_uid,
+                kb_ids=valid_kb_ids,
+                assistant_config=assistant_config,
+            ):
+                if event["type"] == "token":
+                    full_answer += event["content"]
+                elif event["type"] == "sources":
+                    source_docs = event["data"]
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            # 保存到记忆系统
+            if full_answer:
+                try:
+                    memory_system.add_short_term_memory(session_uid, "user", request.query)
+                    memory_system.add_short_term_memory(session_uid, "assistant", full_answer)
+                except Exception as e:
+                    logger.error(f"Failed to save memory: {e}")
+
+                # 保存交互到数据库（使用独立会话）
+                try:
+                    new_db = SessionLocal()
+                    interaction = ChatInteraction(
+                        session_id=chat_session.id,
+                        kb_id=valid_kb_ids[0] if valid_kb_ids else None,
+                        query=request.query,
+                        answer=full_answer,
+                        retrieved_docs=source_docs or [],
+                        metrics={}
+                    )
+                    new_db.add(interaction)
+                    new_db.commit()
+                    new_db.close()
+                except Exception as e:
+                    logger.error(f"Failed to save interaction: {e}")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
     )
 
 
