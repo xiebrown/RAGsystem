@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any, Dict
+import json
 import shutil
 import os
 import re
@@ -10,7 +11,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 import io
 
 from src.database.sql_session import get_db
-from src.database.models import KnowledgeBase, KnowledgeDocument, User, DocumentChunk, GeneratedQAPair
+from src.database.models import KnowledgeBase, KnowledgeDocument, User, DocumentChunk, GeneratedQAPair, UploadSession
 from src.utils.security import create_access_token
 from src.settings import settings
 from src.api.dependencies import get_current_user
@@ -18,6 +19,8 @@ from src.services.qa_generator import qa_generator
 from src.worker.tasks import process_document_task
 from src.services.storage import storage_service
 from src.utils.preview_utils import get_preview_response
+from src.utils.upload_chunk_storage import (save_chunk, assemble_file, cleanup_upload,
+                                            get_missing_chunks, mark_chunk_received)
 
 router = APIRouter()
 
@@ -258,6 +261,284 @@ def upload_document(
     
     return {"message": "File uploaded successfully", "doc_id": doc.id, "task_id": task.id}
 
+
+# --- Resumable Upload (断点续传) ---
+
+class UploadInitRequest(BaseModel):
+    filename: str
+    file_size: int
+    file_hash: Optional[str] = None
+    chunk_size: int = 5 * 1024 * 1024  # 5MB default
+
+
+class UploadInitResponse(BaseModel):
+    upload_id: str
+    chunk_size: int
+    total_chunks: int
+    received_chunks: List[int]
+    resumed: bool
+
+
+class UploadChunkResponse(BaseModel):
+    chunk_index: int
+    received: bool
+    received_chunks: List[int]
+
+
+class UploadStatusResponse(BaseModel):
+    upload_id: str
+    filename: str
+    file_hash: Optional[str]
+    file_size: int
+    chunk_size: int
+    total_chunks: int
+    received_chunks: List[int]
+    missing_chunks: List[int]
+    status: str
+
+
+@router.post("/{kb_id}/uploads/init", response_model=UploadInitResponse)
+def init_upload(
+    kb_id: int,
+    body: UploadInitRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """初始化断点续传会话。如果已存在相同 hash+filename 的未完成会话则恢复。"""
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+    if not kb:
+        raise HTTPException(404, detail="Knowledge Base not found")
+    if kb.owner_id != current_user.id:
+        raise HTTPException(403, detail="Not authorized")
+
+    total_chunks = max(1, (body.file_size + body.chunk_size - 1) // body.chunk_size)
+    import uuid
+    upload_uid = str(uuid.uuid4())
+    resumed = False
+
+    # 尝试恢复已有会话（相同 hash 且未完成）
+    existing = None
+    if body.file_hash:
+        existing = db.query(UploadSession).filter(
+            UploadSession.file_hash == body.file_hash,
+            UploadSession.filename == body.filename,
+            UploadSession.kb_id == kb_id,
+            UploadSession.user_id == current_user.id,
+            UploadSession.status == "uploading",
+        ).order_by(UploadSession.created_at.desc()).first()
+
+    if existing:
+        upload_uid = existing.upload_uid
+        resumed = True
+        received = json.loads(existing.received_chunks or "[]")
+        return UploadInitResponse(
+            upload_id=upload_uid,
+            chunk_size=existing.chunk_size,
+            total_chunks=existing.total_chunks,
+            received_chunks=sorted(received),
+            resumed=True,
+        )
+
+    # 创建新会话
+    session = UploadSession(
+        upload_uid=upload_uid,
+        filename=body.filename,
+        file_hash=body.file_hash,
+        file_size=body.file_size,
+        chunk_size=body.chunk_size,
+        total_chunks=total_chunks,
+        received_chunks="[]",
+        status="uploading",
+        kb_id=kb_id,
+        user_id=current_user.id,
+    )
+    db.add(session)
+    db.commit()
+
+    return UploadInitResponse(
+        upload_id=upload_uid,
+        chunk_size=body.chunk_size,
+        total_chunks=total_chunks,
+        received_chunks=[],
+        resumed=False,
+    )
+
+
+@router.post("/{kb_id}/uploads/{upload_id}/chunk", response_model=UploadChunkResponse)
+def upload_chunk(
+    kb_id: int,
+    upload_id: str,
+    chunk_index: int = Form(...),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """上传单个分片。支持重复上传（幂等）。"""
+    session = db.query(UploadSession).filter(
+        UploadSession.upload_uid == upload_id,
+        UploadSession.kb_id == kb_id,
+        UploadSession.status == "uploading",
+    ).first()
+    if not session:
+        raise HTTPException(404, detail="Upload session not found")
+    if session.user_id != current_user.id:
+        raise HTTPException(403, detail="Not authorized")
+    if chunk_index < 0 or chunk_index >= session.total_chunks:
+        raise HTTPException(400, detail=f"Invalid chunk index {chunk_index}")
+
+    # 幂等：已接收则直接返回
+    received = json.loads(session.received_chunks or "[]")
+    if chunk_index in received:
+        return UploadChunkResponse(
+            chunk_index=chunk_index,
+            received=True,
+            received_chunks=sorted(received),
+        )
+
+    # 保存分片
+    data = file.file.read()
+    save_chunk(upload_id, chunk_index, data)
+
+    # 更新会话
+    session.received_chunks = mark_chunk_received(session.received_chunks, chunk_index)
+    db.commit()
+
+    return UploadChunkResponse(
+        chunk_index=chunk_index,
+        received=True,
+        received_chunks=sorted(json.loads(session.received_chunks)),
+    )
+
+
+@router.get("/{kb_id}/uploads/{upload_id}", response_model=UploadStatusResponse)
+def get_upload_status(
+    kb_id: int,
+    upload_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查询上传进度。"""
+    session = db.query(UploadSession).filter(
+        UploadSession.upload_uid == upload_id,
+        UploadSession.kb_id == kb_id,
+    ).first()
+    if not session:
+        raise HTTPException(404, detail="Upload session not found")
+    if session.user_id != current_user.id:
+        raise HTTPException(403, detail="Not authorized")
+
+    received = json.loads(session.received_chunks or "[]")
+    missing = get_missing_chunks(session.received_chunks, session.total_chunks)
+
+    return UploadStatusResponse(
+        upload_id=session.upload_uid,
+        filename=session.filename,
+        file_hash=session.file_hash,
+        file_size=session.file_size,
+        chunk_size=session.chunk_size,
+        total_chunks=session.total_chunks,
+        received_chunks=sorted(received),
+        missing_chunks=missing,
+        status=session.status,
+    )
+
+
+@router.post("/{kb_id}/uploads/{upload_id}/complete")
+def complete_upload(
+    kb_id: int,
+    upload_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """完成上传：合并分片、创建文档记录、触发 Celery 处理。"""
+    session = db.query(UploadSession).filter(
+        UploadSession.upload_uid == upload_id,
+        UploadSession.kb_id == kb_id,
+        UploadSession.status == "uploading",
+    ).first()
+    if not session:
+        raise HTTPException(404, detail="Upload session not found")
+    if session.user_id != current_user.id:
+        raise HTTPException(403, detail="Not authorized")
+
+    # 检查所有分片是否齐全
+    received = json.loads(session.received_chunks or "[]")
+    missing = sorted(set(range(session.total_chunks)) - set(received))
+    if missing:
+        raise HTTPException(400, detail=f"Missing chunks: {missing}")
+
+    # 合并分片
+    import uuid
+    doc_uid = str(uuid.uuid4())
+    safe_filename = sanitize_filename(session.filename)
+    file_path = settings.UPLOAD_DIR / f"{doc_uid}_{safe_filename}"
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    assemble_file(upload_id, session.total_chunks, file_path)
+
+    # 上传到 MinIO（不影响主流程）
+    abs_file_path = file_path.resolve()
+    try:
+        object_name = f"{doc_uid}_{safe_filename}"
+        with open(abs_file_path, "rb") as f:
+            content = f.read()
+            storage_service.upload_file(object_name, content, safe_filename.split('.')[-1])
+    except Exception as e:
+        print(f"MinIO upload failed: {e}")
+
+    # 创建文档记录
+    doc = KnowledgeDocument(
+        doc_uid=doc_uid,
+        kb_id=kb_id,
+        filename=safe_filename,
+        file_path=str(abs_file_path),
+        file_type=safe_filename.split('.')[-1],
+        file_size=session.file_size,
+        status=0,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    # 标记会话完成
+    session.status = "completed"
+    session.received_chunks = json.dumps(sorted(received))
+    db.commit()
+
+    # 清理分片文件
+    cleanup_upload(upload_id)
+
+    # 触发 Celery 处理
+    task = process_document_task.delay(doc.id)
+
+    return {"message": "Upload completed", "doc_id": doc.id, "task_id": task.id}
+
+
+@router.delete("/{kb_id}/uploads/{upload_id}")
+def cancel_upload(
+    kb_id: int,
+    upload_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """取消上传，清理分片文件和会话记录。"""
+    session = db.query(UploadSession).filter(
+        UploadSession.upload_uid == upload_id,
+        UploadSession.kb_id == kb_id,
+    ).first()
+    if not session:
+        raise HTTPException(404, detail="Upload session not found")
+    if session.user_id != current_user.id:
+        raise HTTPException(403, detail="Not authorized")
+
+    session.status = "cancelled"
+    db.commit()
+
+    cleanup_upload(upload_id)
+    db.delete(session)
+    db.commit()
+
+    return {"message": "Upload cancelled"}
+
 @router.post("/documents/batch-retry")
 def batch_retry_documents(
     doc_ids: List[int],
@@ -384,9 +665,6 @@ def generate_qa_for_document(
         db.refresh(qa)
         
     return saved_pairs
-
-from fastapi.responses import StreamingResponse
-import io
 
 @router.post("/documents/{doc_id}/qa-pairs", response_model=QAPairOut)
 def create_qa_pair(
