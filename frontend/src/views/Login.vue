@@ -3,22 +3,22 @@
     <el-card class="box-card">
       <template #header>
         <div class="card-header">
-          <span>{{ isRegister ? 'Register' : 'Login' }}</span>
+          <span>{{ isRegister ? '注册' : '登录' }}</span>
         </div>
       </template>
       <el-form :model="form" label-width="80px">
-        <el-form-item label="Username">
+        <el-form-item label="用户名">
           <el-input v-model="form.username" />
         </el-form-item>
-        <el-form-item label="Password">
+        <el-form-item label="密码">
           <el-input v-model="form.password" type="password" />
         </el-form-item>
-        <el-form-item v-if="isRegister" label="Email">
+        <el-form-item v-if="isRegister" label="邮箱">
           <el-input v-model="form.email" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="submit">{{ isRegister ? 'Register' : 'Login' }}</el-button>
-          <el-button @click="isRegister = !isRegister">{{ isRegister ? 'Switch to Login' : 'Switch to Register' }}</el-button>
+          <el-button type="primary" @click="submit">{{ isRegister ? '注册' : '登录' }}</el-button>
+          <el-button @click="isRegister = !isRegister">{{ isRegister ? '切换至登录' : '切换至注册' }}</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -43,7 +43,7 @@ const submit = async () => {
     if (isRegister.value) {
       await api.post('/auth/register', form)
       isRegister.value = false
-      alert('Registration successful! Please login.')
+      alert('注册成功！请登录。')
     } else {
       const formData = new URLSearchParams()
       formData.append('username', form.username)
@@ -57,7 +57,7 @@ const submit = async () => {
     }
   } catch (err) {
     console.error(err)
-    alert('Operation failed')
+    alert('操作失败')
   }
 }
 </script>

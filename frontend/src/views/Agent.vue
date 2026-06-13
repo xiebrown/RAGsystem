@@ -1,7 +1,7 @@
 <template>
   <div class="agent-container">
     <div class="header">
-      <h2>智能体管理 (Agent Management)</h2>
+      <h2>智能体管理</h2>
       <el-button type="primary" @click="openDialog()">创建智能体</el-button>
     </div>
     
@@ -149,7 +149,7 @@
           <el-form :model="form" label-width="140px">
             <el-form-item label="输出格式">
                <el-select v-model="form.interaction_config.output_format">
-                 <el-option label="Markdown" value="markdown" />
+                 <el-option label="Markdown (推荐)" value="markdown" />
                  <el-option label="JSON" value="json" />
                  <el-option label="纯文本" value="text" />
                </el-select>

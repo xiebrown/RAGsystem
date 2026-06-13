@@ -4,18 +4,18 @@
       <div class="config-section" v-if="currentAssistant">
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <h3>{{ currentAssistant.name }}</h3>
-            <el-button type="primary" size="small" @click="saveAssistantConfig" v-if="hasConfigChanges">Save</el-button>
+            <el-button type="primary" size="small" @click="saveAssistantConfig" v-if="hasConfigChanges">保存</el-button>
         </div>
         <p class="assistant-desc">{{ currentAssistant.description }}</p>
         <el-divider />
         
         <el-form label-position="top" size="small">
              <el-tabs v-model="configTab">
-                 <el-tab-pane label="Basic" name="basic">
-                     <el-form-item label="System Prompt">
+                 <el-tab-pane label="基础配置" name="basic">
+                     <el-form-item label="系统提示词">
                          <el-input type="textarea" v-model="currentAssistant.system_prompt" :rows="4" @input="onConfigChange" />
                      </el-form-item>
-                     <el-form-item label="Temperature">
+                     <el-form-item label="温度">
                          <el-slider v-model="currentAssistant.temperature" :min="0" :max="1" :step="0.1" @input="onConfigChange" />
                      </el-form-item>
                  </el-tab-pane>
@@ -23,25 +23,25 @@
                      <el-form-item label="Top-K">
                          <el-slider v-model="currentAssistant.rag_config.top_k" :min="1" :max="20" @input="onConfigChange" />
                      </el-form-item>
-                     <el-form-item label="Rerank">
+                     <el-form-item label="重排序">
                          <el-switch v-model="currentAssistant.rag_config.enable_rerank" @change="onConfigChange" />
                      </el-form-item>
                  </el-tab-pane>
-                 <el-tab-pane label="Versions" name="versions">
+                 <el-tab-pane label="版本" name="versions">
                      <div class="version-list">
                          <div v-for="ver in assistantVersions" :key="ver.version" class="version-item">
                              <span>{{ ver.version }}</span>
-                             <el-button size="small" type="text" @click="restoreVersion(ver)">Restore</el-button>
+                             <el-button size="small" type="text" @click="restoreVersion(ver)">恢复</el-button>
                          </div>
                      </div>
                  </el-tab-pane>
              </el-tabs>
         </el-form>
-        <el-button type="primary" plain size="small" style="width: 100%; margin-top: 10px;" @click="changeAssistant">Switch Assistant</el-button>
+        <el-button type="primary" plain size="small" style="width: 100%; margin-top: 10px;" @click="changeAssistant">切换助手</el-button>
       </div>
 
       <div class="config-section" v-else>
-        <el-select v-model="selectedAssistant" placeholder="Select Assistant" class="config-select" @change="onAssistantChange">
+        <el-select v-model="selectedAssistant" placeholder="选择助手" class="config-select" @change="onAssistantChange">
           <el-option
             v-for="item in assistants"
             :key="item.id"
@@ -49,11 +49,11 @@
             :value="item.id"
           />
         </el-select>
-        <el-button type="text" @click="$router.push('/assistants')">Manage Assistants</el-button>
-        
-        <el-divider>OR</el-divider>
-        
-        <el-select v-model="selectedKB" placeholder="Direct KB (Legacy)" class="config-select" :disabled="!!selectedAssistant">
+        <el-button type="text" @click="$router.push('/assistants')">管理助手</el-button>
+
+        <el-divider>或</el-divider>
+
+        <el-select v-model="selectedKB" placeholder="直接选择知识库（旧版）" class="config-select" :disabled="!!selectedAssistant">
           <el-option
             v-for="item in kbs"
             :key="item.id"
@@ -65,11 +65,11 @@
 
       <div class="session-list">
         <div class="session-header">
-            <span>History</span>
-            <el-button type="text" size="small" @click="batchDeleteMode = !batchDeleteMode">{{ batchDeleteMode ? 'Cancel' : 'Manage' }}</el-button>
+            <span>历史记录</span>
+            <el-button type="text" size="small" @click="batchDeleteMode = !batchDeleteMode">{{ batchDeleteMode ? '取消' : '管理' }}</el-button>
         </div>
         <div v-if="batchDeleteMode" class="batch-actions">
-            <el-button type="danger" size="small" :disabled="!selectedSessions.length" @click="deleteSelectedSessions">Delete Selected</el-button>
+            <el-button type="danger" size="small" :disabled="!selectedSessions.length" @click="deleteSelectedSessions">删除选中</el-button>
         </div>
         <div 
           v-for="session in sessions" 
@@ -79,10 +79,10 @@
           @click="!batchDeleteMode && loadSession(session)"
         >
           <el-checkbox v-if="batchDeleteMode" v-model="selectedSessions" :label="session.session_uid" @click.stop />
-          <span class="session-title">{{ session.title || 'New Chat' }}</span>
+          <span class="session-title">{{ session.title || '新对话' }}</span>
           <el-button v-if="!batchDeleteMode" class="delete-btn" type="text" icon="Delete" @click.stop="deleteSession(session.session_uid)"></el-button>
         </div>
-        <el-button @click="newChat" style="width: 100%; margin-top: 10px;" v-if="!batchDeleteMode">New Chat</el-button>
+        <el-button @click="newChat" style="width: 100%; margin-top: 10px;" v-if="!batchDeleteMode">新建对话</el-button>
       </div>
     </el-aside>
     
@@ -94,10 +94,10 @@
         <div v-for="(msg, index) in messages" :key="index" :class="['message', msg.role]">
           <div class="message-content" style="white-space: pre-wrap;">{{ msg.content }}</div>
           <div v-if="msg.sources && msg.sources.length" class="sources">
-            <small>Sources:</small>
+            <small>来源：</small>
             <ul>
               <li v-for="src in msg.sources" :key="src.id">
-                {{ src.text.substring(0, 50) }}... (Score: {{ src.score.toFixed(2) }})
+                {{ src.text.substring(0, 50) }}... (得分: {{ src.score.toFixed(2) }})
               </li>
             </ul>
           </div>
@@ -107,11 +107,11 @@
       <div class="input-area">
         <el-input 
           v-model="inputQuery" 
-          placeholder="Type your question..." 
+          placeholder="输入您的问题..."
           @keyup.enter="sendMessage"
         >
           <template #append>
-            <el-button @click="sendMessage">Send</el-button>
+            <el-button @click="sendMessage">发送</el-button>
           </template>
         </el-input>
       </div>
@@ -182,11 +182,11 @@ const saveAssistantConfig = async () => {
             config: payload
         })
         
-        ElMessage.success(`Saved as ${nextVer}`)
+        ElMessage.success(`已保存为 ${nextVer}`)
         hasConfigChanges.value = false
         fetchVersions()
     } catch (e) {
-        ElMessage.error('Save failed')
+        ElMessage.error('保存失败')
     }
 }
 
@@ -202,7 +202,7 @@ const fetchVersions = async () => {
 
 const restoreVersion = async (ver) => {
     try {
-        await ElMessageBox.confirm(`Restore to ${ver.version}?`, 'Confirm')
+        await ElMessageBox.confirm(`恢复至 ${ver.version}？`, '确认')
         // Apply config
         const config = ver.config
         // Update currentAssistant locally
@@ -212,10 +212,10 @@ const restoreVersion = async (ver) => {
         
         // Save to backend
         await api.put(`/assistants/${currentAssistant.value.id}`, config)
-        ElMessage.success('Restored')
+        ElMessage.success('已恢复')
         hasConfigChanges.value = false
     } catch (e) {
-        if (e !== 'cancel') ElMessage.error('Restore failed')
+        if (e !== 'cancel') ElMessage.error('恢复失败')
     }
 }
 
@@ -267,29 +267,29 @@ const onAssistantChange = () => {
 
 const deleteSession = async (uid) => {
     try {
-        await ElMessageBox.confirm('Delete this session?', 'Warning', { type: 'warning' })
+        await ElMessageBox.confirm('删除此会话？', '警告', { type: 'warning' })
         await api.delete(`/chat/sessions/${uid}`)
         fetchSessions()
         if (currentSessionId.value === uid) {
             newChat()
         }
-        ElMessage.success('Deleted')
+        ElMessage.success('已删除')
     } catch (e) {
-        if (e !== 'cancel') ElMessage.error('Failed')
+        if (e !== 'cancel') ElMessage.error('删除失败')
     }
 }
 
 const deleteSelectedSessions = async () => {
     try {
-        await ElMessageBox.confirm(`Delete ${selectedSessions.value.length} sessions?`, 'Warning', { type: 'warning' })
+        await ElMessageBox.confirm(`删除 ${selectedSessions.value.length} 个会话？`, '警告', { type: 'warning' })
         await api.delete('/chat/sessions', { data: selectedSessions.value })
         fetchSessions()
         selectedSessions.value = []
         batchDeleteMode.value = false
         newChat()
-        ElMessage.success('Batch deleted')
+        ElMessage.success('批量删除成功')
     } catch (e) {
-        if (e !== 'cancel') ElMessage.error('Failed')
+        if (e !== 'cancel') ElMessage.error('批量删除失败')
     }
 }
 
@@ -376,7 +376,7 @@ const sendMessage = async () => {
             messages.value[lastIdx].sources = data.data
           } else if (data.type === 'error') {
             const lastIdx = messages.value.length - 1
-            messages.value[lastIdx].content = `Error: ${data.message}`
+            messages.value[lastIdx].content = `错误: ${data.message}`
           }
         } catch (e) {
           // ignore parse errors for incomplete chunks
@@ -409,7 +409,7 @@ const sendMessage = async () => {
       }
     } catch (e2) {
       console.error(e2)
-      messages.value.push({ role: 'system', content: 'Error sending message: ' + (e2.response?.data?.detail || e2.message) })
+      messages.value.push({ role: 'system', content: '发送消息失败：' + (e2.response?.data?.detail || e2.message) })
     }
   }
 }
