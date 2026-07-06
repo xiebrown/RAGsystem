@@ -6,15 +6,15 @@
 
 | 模块 | 功能 |
 |------|------|
-| 📝 笔记 | 富文本 / Markdown 编辑器 (Tiptap)，标签管理，自动保存 |
-| 🔄 间隔复习 | SM-2 遗忘曲线算法，卡片式复习，质量评分 (0-5) |
-| ✨ AI 联机补全 | 打字停顿后模型实时补全（1.5s 去抖），Tab 快速采纳 |
-| ✍️ AI 写作助手 | 续写、扩写、摘要生成，SSE 流式输出，一键插入文档 |
-| 💬 智能问答 | 基于 RAG 的 Agent 对话，关联知识库，文档引用来源展示 |
-| 🤖 RAG 对话 | 单跳 / 多跳推理，会话管理，短期 + 长期记忆 |
-| 📚 知识库 | 多格式文档上传，异步解析 → 分块 → 向量化 → 入库 |
-| 🧪 评估体系 | 自动生成 QA 数据集，LLM-as-Judge 评估，报告导出 |
-| 🧩 助手编排 | 可配置系统提示词、温度、Top-K，绑定知识库组合 |
+| 笔记 | 富文本 / Markdown 编辑器 (Tiptap)，标签管理，自动保存 |
+| 间隔复习 | SM-2 遗忘曲线算法，卡片式复习，质量评分 (0-5) |
+| AI 联机补全 | 打字停顿后模型实时补全（1.5s 去抖），Tab 快速采纳 |
+| AI 写作助手 | 续写、扩写、摘要生成，SSE 流式输出，一键插入文档 |
+| 智能问答 | 基于 RAG 的 Agent 对话，关联知识库，文档引用来源展示 |
+| RAG 对话 | 单跳 / 多跳推理，会话管理，短期 + 长期记忆 |
+| 知识库 | 多格式文档上传，异步解析 → 分块 → 向量化 → 入库 |
+| 评估体系 | 自动生成 QA 数据集，LLM-as-Judge 评估，报告导出 |
+| 助手编排 | 可配置系统提示词、温度、Top-K，绑定知识库组合 |
 
 ## 技术栈
 
@@ -181,7 +181,7 @@ RAGsystem/
 │   │   └── routers/
 │   │       ├── auth.py       # 注册 / 登录
 │   │       ├── chat.py       # RAG 对话接口
-│   │       ├── notes.py      # 📝 笔记 CRUD / 复习 / AI 补全 / 写作 / 问答
+│   │       ├── notes.py      # 笔记 CRUD / 复习 / AI 补全 / 写作 / 问答
 │   │       ├── agent.py      # AI Agent 管理
 │   │       ├── assistant.py  # 助手编排
 │   │       ├── knowledge_base.py  # 知识库管理
@@ -199,7 +199,7 @@ RAGsystem/
 │   ├── retrieval/            # 检索 & 重排序
 │   ├── services/
 │   │   ├── rag_service.py    # RAG 主流程（单跳 / 多跳 / 流式）
-│   │   ├── note_service.py   # 📝 笔记业务 + SM-2 算法 + AI 提示工程
+│   │   ├── note_service.py   # 笔记业务 + SM-2 算法 + AI 提示工程
 │   │   ├── memory_service.py # 短期 + 长期记忆
 │   │   └── evaluator.py      # RAG 评估
 │   ├── utils/                # 工具函数（JWT / 日志 / 预览）
@@ -209,14 +209,14 @@ RAGsystem/
 ├── frontend/
 │   └── src/
 │       ├── components/
-│       │   ├── TipTapEditor.vue       # 📝 富文本/Markdown 编辑器
-│       │   ├── AICompletion.vue       # ✨ AI 联机补全覆盖层
-│       │   ├── AIWritingAssistant.vue # ✍️ AI 写作助手侧面板
-│       │   └── SmartQA.vue           # 💬 智能问答面板
+│       │   ├── TipTapEditor.vue       # 富文本/Markdown 编辑器
+│       │   ├── AICompletion.vue       # AI 联机补全覆盖层
+│       │   ├── AIWritingAssistant.vue # AI 写作助手侧面板
+│       │   └── SmartQA.vue           # 智能问答面板
 │       ├── views/
 │       │   ├── NotesList.vue          # 笔记列表/搜索/筛选
 │       │   ├── NoteEditor.vue         # 笔记编辑（编辑器+AI面板）
-│       │   └── NoteReview.vue         # 🔄 间隔复习卡片
+│       │   └── NoteReview.vue         # 间隔复习卡片
 │       │   ├── Chat.vue / Assistant.vue / KnowledgeBase.vue / ...
 │       ├── store/
 │       │   └── notes.js              # Pinia 笔记状态管理
