@@ -1,6 +1,20 @@
 # RAG-PDF-System
 
-基于 FastAPI + LangChain + Milvus + Qwen 的多格式文档 RAG（检索增强生成）系统，支持多跳推理、知识库管理、评估体系和 AI 助手编排。
+基于 FastAPI + Vue 3 + LangChain + Milvus + Qwen 的多格式文档 RAG（检索增强生成）系统，支持多跳推理、知识库管理、评估体系、AI 助手编排，以及**笔记写作与间隔复习**。
+
+## 功能概览
+
+| 模块 | 功能 |
+|------|------|
+| 📝 笔记 | 富文本 / Markdown 编辑器 (Tiptap)，标签管理，自动保存 |
+| 🔄 间隔复习 | SM-2 遗忘曲线算法，卡片式复习，质量评分 (0-5) |
+| ✨ AI 联机补全 | 打字停顿后模型实时补全（1.5s 去抖），Tab 快速采纳 |
+| ✍️ AI 写作助手 | 续写、扩写、摘要生成，SSE 流式输出，一键插入文档 |
+| 💬 智能问答 | 基于 RAG 的 Agent 对话，关联知识库，文档引用来源展示 |
+| 🤖 RAG 对话 | 单跳 / 多跳推理，会话管理，短期 + 长期记忆 |
+| 📚 知识库 | 多格式文档上传，异步解析 → 分块 → 向量化 → 入库 |
+| 🧪 评估体系 | 自动生成 QA 数据集，LLM-as-Judge 评估，报告导出 |
+| 🧩 助手编排 | 可配置系统提示词、温度、Top-K，绑定知识库组合 |
 
 ## 技术栈
 
@@ -8,6 +22,7 @@
 |---|---|
 | 后端框架 | FastAPI (Python 3.10+) |
 | 前端 | Vue 3 + Element Plus + Pinia + Vite |
+| 富文本编辑器 | TipTap (ProseMirror) |
 | ORM | SQLAlchemy 2.x (SQLite 本地开发) |
 | 向量数据库 | Milvus 2.3.4 |
 | 嵌入模型 | DashScope text-embedding-v1 |
@@ -100,7 +115,7 @@ uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 celery -A src.worker.celery_app worker --loglevel=info -P solo
 ```
 
-### 7. 启动前端（可选）
+### 7. 启动前端
 
 ```bash
 cd frontend
@@ -118,25 +133,55 @@ npm run dev
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-这将同时启动所有 7 个服务：app (后端)、worker (Celery)、flower、rabbitmq、redis、etcd、minio、milvus-standalone。
+这将同时启动所有 8 个服务：app (后端)、worker (Celery)、flower、rabbitmq、redis、etcd、minio、milvus-standalone。
+
+## 笔记功能详解
+
+### 编辑器
+- **富文本模式**：Tiptap 工具栏（H1-H3、粗体、斜体、下划线、列表、引用、代码块、链接、图片）
+- **Markdown 模式**：一键切换
+- **自动保存**：3 秒去抖自动保存
+
+### 间隔复习（遗忘曲线）
+采用 SM-2 算法，根据用户自评质量（0-5 分）动态计算下次复习间隔：
+
+| 评分 | 含义 | 结果 |
+|------|------|------|
+| 0 | 完全遗忘 | 重置间隔为 1 天 |
+| 1-2 | 记错但熟悉 | 重置间隔为 1 天 |
+| 3 | 回忆困难但正确 | 第 1 次 1 天，第 2 次 6 天，之后 × 难度系数 |
+| 4-5 | 顺利回忆 | 同上，但难度系数提升更多 |
+
+### AI 联机补全
+- 编辑器输入停顿 **1.5 秒** 后自动触发
+- 灰色文字显示在光标位置
+- **Tab** 键采纳补全，**Esc** 键拒绝
+
+### AI 写作助手
+- **续写**：从当前内容自然延续
+- **扩写**：丰富细节和深度表达
+- **摘要**：生成简洁摘要
+- 全部通过 **SSE 流式** 逐 token 输出
+
+### 智能问答
+- 笔记可关联已有知识库
+- 基于 RAG 的 Agent 对话，自动引用来源文档
+- 引用来源可折叠展开，显示匹配度得分
 
 ## 项目结构
 
 ```
 RAGsystem/
 ├── config/                   # 配置文件
-│   ├── settings.py           # 应用配置（Pydantic Settings）
-│   ├── database.py           # 数据库连接配置
-│   ├── embedding.py          # 嵌入模型配置
-│   └── logging.yaml          # 日志配置
 ├── src/
 │   ├── main.py               # FastAPI 应用入口
 │   ├── settings.py           # 全局设置（.env 驱动）
 │   ├── api/
 │   │   ├── dependencies.py   # JWT 鉴权依赖
-│   │   └── routers/          # 路由模块
+│   │   └── routers/
 │   │       ├── auth.py       # 注册 / 登录
 │   │       ├── chat.py       # RAG 对话接口
+│   │       ├── notes.py      # 📝 笔记 CRUD / 复习 / AI 补全 / 写作 / 问答
 │   │       ├── agent.py      # AI Agent 管理
 │   │       ├── assistant.py  # 助手编排
 │   │       ├── knowledge_base.py  # 知识库管理
@@ -145,23 +190,37 @@ RAGsystem/
 │   │       ├── monitor.py    # 文档状态监控
 │   │       └── health.py     # 健康检查
 │   ├── database/
-│   │   ├── models.py         # SQLAlchemy 数据模型
+│   │   ├── models.py         # SQLAlchemy 数据模型（含 Note / NoteReview / NoteTag...）
 │   │   ├── sql_session.py    # 数据库会话管理
 │   │   └── vector_db.py      # Milvus 向量库客户端
 │   ├── embedding/            # 嵌入服务
 │   ├── llm/                  # 大模型客户端
 │   ├── processors/           # 文档解析器（PDF/DOCX/XLSX/PPTX/MD/HTML）
 │   ├── retrieval/            # 检索 & 重排序
-│   ├── services/             # 核心业务服务
-│   │   ├── rag_service.py    # RAG 主流程（单跳 / 多跳）
+│   ├── services/
+│   │   ├── rag_service.py    # RAG 主流程（单跳 / 多跳 / 流式）
+│   │   ├── note_service.py   # 📝 笔记业务 + SM-2 算法 + AI 提示工程
 │   │   ├── memory_service.py # 短期 + 长期记忆
-│   │   └── evaluator.py      # RAG 评估（忠实性 / 相关性 / 准确性）
+│   │   └── evaluator.py      # RAG 评估
 │   ├── utils/                # 工具函数（JWT / 日志 / 预览）
 │   └── worker/               # Celery 任务
-│       ├── celery_app.py     # Celery 配置
-│       └── tasks.py          # 文档处理异步任务
-├── frontend/                 # Vue 3 前端
-│   └── src/views/            # 页面组件
+│       ├── celery_app.py
+│       └── tasks.py
+├── frontend/
+│   └── src/
+│       ├── components/
+│       │   ├── TipTapEditor.vue       # 📝 富文本/Markdown 编辑器
+│       │   ├── AICompletion.vue       # ✨ AI 联机补全覆盖层
+│       │   ├── AIWritingAssistant.vue # ✍️ AI 写作助手侧面板
+│       │   └── SmartQA.vue           # 💬 智能问答面板
+│       ├── views/
+│       │   ├── NotesList.vue          # 笔记列表/搜索/筛选
+│       │   ├── NoteEditor.vue         # 笔记编辑（编辑器+AI面板）
+│       │   └── NoteReview.vue         # 🔄 间隔复习卡片
+│       │   ├── Chat.vue / Assistant.vue / KnowledgeBase.vue / ...
+│       ├── store/
+│       │   └── notes.js              # Pinia 笔记状态管理
+│       └── router/index.js
 ├── docker/                   # Docker 部署配置
 ├── scripts/                  # 评估 & 工具脚本
 ├── docs/                     # 文档
@@ -175,46 +234,35 @@ RAGsystem/
 
 所有 API 前缀：`/api/v1`
 
-| 路由 | 说明 | 鉴权 |
-|---|---|---|
-| `POST /auth/register` | 用户注册 | 否 |
-| `POST /auth/login/access-token` | 登录获取 JWT | 否 |
-| `GET /health` | 健康检查 + Celery 状态 | 否 |
-| `POST /chat/` | 核心 RAG 对话 | 是 |
-| `GET /chat/sessions` | 获取会话列表 | 是 |
-| `CRUD /knowledge-bases` | 知识库增删改查 | 是 |
-| `POST /knowledge-bases/{id}/documents/upload` | 上传文档 | 是 |
-| `CRUD /assistants` | 助手编排管理 | 是 |
-| `CRUD /agents` | AI Agent 管理 | 是 |
-| `CRUD /evaluations` | 评估任务管理 | 是 |
-| `GET /storage/files` | MinIO 文件浏览 | 是 |
-| `GET /monitor/stats` | 文档处理状态统计 | 是 |
+### 笔记
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| GET | `/notes/` | 笔记列表（分页、搜索、标签筛选） |
+| POST | `/notes/` | 创建笔记 |
+| GET | `/notes/{id}` | 笔记详情（含复习状态） |
+| PUT | `/notes/{id}` | 更新笔记 |
+| DELETE | `/notes/{id}` | 删除笔记 |
+| GET | `/notes/{id}/review-status` | 间隔复习状态 |
+| POST | `/notes/{id}/review` | 提交复习评分（SM-2） |
+| GET | `/notes/review/due` | 到期笔记列表 |
+| POST | `/notes/ai/complete` | AI 联机补全 |
+| POST | `/notes/ai/write` | AI 写作助手（SSE 流式） |
+| POST | `/notes/{id}/chat` | 智能问答（SSE 流式 + 来源引用） |
+| GET/POST | `/notes/tags/list`, `/notes/tags` | 标签管理 |
+
+### 系统
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| POST | `/auth/register` | 用户注册 |
+| POST | `/auth/login/access-token` | 登录获取 JWT |
+| GET | `/health` | 健康检查 |
+| CRUD | `/knowledge-bases` | 知识库管理 |
+| CRUD | `/assistants` | 助手编排 |
+| CRUD | `/agents` | AI Agent 管理 |
+| CRUD | `/evaluations` | 评估任务 |
+| POST | `/chat/` | RAG 对话（含流式） |
 
 完整文档访问 http://localhost:8000/docs
-
-## 核心功能
-
-### RAG 对话
-- 单跳检索：向量检索 + 重排序 + LLM 生成
-- 多跳推理：自动分解子问题，逐跳检索，融合证据后作答
-- 会话管理：Redis 短期记忆 + Milvus 长期记忆
-
-### 知识库管理
-- 支持格式：PDF、DOCX、XLSX、PPTX、Markdown、HTML、TXT
-- 文档上传 → 异步解析 → 分块 → 向量化 → 入库全流程
-- 自定义分块策略（块大小、重叠量）
-- 批量操作、状态监控、文档预览
-
-### 评估体系
-- 自动生成 QA 数据集（单跳 / 多跳 / 错误类型）
-- LLM-as-Judge 评估（忠实性、相关性、上下文精度、准确性）
-- 延迟分位数统计
-- Markdown 评估报告导出
-
-### AI 助手编排
-- 可配置系统提示词、温度、Top-K、重排序策略
-- 绑定知识库组合
-- 支持 Function Call / ReAct / Plan-Execute 三种 Agent 类型
 
 ## 许可证
 
