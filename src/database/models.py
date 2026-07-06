@@ -248,3 +248,67 @@ class Agent(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="agents")
+
+
+class Note(Base):
+    """笔记模型，支持富文本和Markdown内容"""
+    __tablename__ = "notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    note_uid = Column(String, unique=True, index=True, nullable=False)
+    title = Column(String, default="未命名笔记")
+    content = Column(JSON, nullable=True)  # Tiptap JSON output
+    content_text = Column(Text, nullable=True)  # Plain text for search
+    content_type = Column(String, default="rich_text")  # "rich_text" | "markdown"
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    tags = Column(JSON, default=list)  # Tag name array
+    status = Column(String, default="active")  # "active" | "archived"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", backref="notes")
+    reviews = relationship("NoteReview", back_populates="note", cascade="all, delete-orphan")
+    knowledge_links = relationship("NoteKnowledgeLink", back_populates="note", cascade="all, delete-orphan")
+
+
+class NoteTag(Base):
+    """笔记标签"""
+    __tablename__ = "note_tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    color = Column(String, default="#409EFF")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", backref="note_tags")
+
+
+class NoteReview(Base):
+    """笔记间隔复习 (SM-2 算法)"""
+    __tablename__ = "note_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    note_id = Column(Integer, ForeignKey("notes.id"), nullable=False, unique=True)
+    review_number = Column(Integer, default=0)
+    ease_factor = Column(Float, default=2.5)
+    interval = Column(Integer, default=0)  # days
+    repetitions = Column(Integer, default=0)
+    next_review_at = Column(DateTime(timezone=True), nullable=True)
+    last_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    quality_score = Column(Integer, nullable=True)  # 0-5
+
+    note = relationship("Note", back_populates="reviews")
+
+
+class NoteKnowledgeLink(Base):
+    """笔记-知识库关联，用于RAG智能问答"""
+    __tablename__ = "note_knowledge_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    note_id = Column(Integer, ForeignKey("notes.id"), nullable=False)
+    kb_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    note = relationship("Note", back_populates="knowledge_links")
+    knowledge_base = relationship("KnowledgeBase")

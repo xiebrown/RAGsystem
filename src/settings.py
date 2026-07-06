@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-v1"
     EMBEDDING_BATCH_SIZE: int = 20
     EMBEDDING_MAX_BATCH_SIZE: int = 25
-    LLM_MODEL: str = "qwen-max"
+    LLM_MODEL: str = "qwen3.7-max"
 
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 19530
@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     SHORT_TERM_MEMORY_TTL: int = 3600  # 1 hour
     LONG_TERM_MEMORY_COLLECTION: str = "user_memory"
     MEMORY_HISTORY_LIMIT: int = 10
+
+    # Note / AI Config
+    NOTE_AUTO_SAVE_DELAY: int = 3000
+    AI_COMPLETION_MAX_TOKENS: int = 100
+    AI_WRITING_MAX_TOKENS: int = 512
+    AI_COMPLETION_TRIGGER_CHARS: int = 3
+    AI_COMPLETION_DEBOUNCE_MS: int = 1500
 
     model_config = SettingsConfigDict(
         env_file=".env",

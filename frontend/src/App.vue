@@ -18,6 +18,10 @@
           <el-icon><User /></el-icon>
           <span>助手</span>
         </el-menu-item>
+        <el-menu-item index="/notes">
+          <el-icon><Notebook /></el-icon>
+          <span>笔记</span>
+        </el-menu-item>
         <!-- <el-menu-item index="/agents">
           <el-icon><Cpu /></el-icon>
           <span>智能体</span>

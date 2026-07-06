@@ -9,7 +9,7 @@ if str(project_root) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.settings import settings
-from src.api.routers import loadfile, query, health, auth, knowledge_base, chat, evaluation, assistant, agent, monitor, storage
+from src.api.routers import loadfile, query, health, auth, knowledge_base, chat, evaluation, assistant, agent, monitor, storage, notes
 from src.database.sql_session import engine, Base
 
 # 创建数据库表结构
@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix=settings.API_PREFIX + "/chat", tags=["RAG Chat"])
     app.include_router(evaluation.router, prefix=settings.API_PREFIX + "/evaluations", tags=["Evaluation"])
     app.include_router(loadfile.router, prefix=settings.API_PREFIX + "/upload", tags=["File Management"])
+    app.include_router(notes.router, prefix=settings.API_PREFIX + "/notes", tags=["Notes"])
 
     return app
 

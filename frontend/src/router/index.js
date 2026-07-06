@@ -8,6 +8,9 @@ import Evaluation from '../views/Evaluation.vue'
 import Assistant from '../views/Assistant.vue'
 import Agent from '../views/Agent.vue'
 import Monitor from '../views/Monitor.vue'
+import NotesList from '../views/NotesList.vue'
+import NoteEditor from '../views/NoteEditor.vue'
+import NoteReview from '../views/NoteReview.vue'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -18,6 +21,9 @@ const routes = [
   { path: '/knowledge-bases/:id', component: KnowledgeBaseDetail, meta: { requiresAuth: true } },
   { path: '/evaluation', component: Evaluation, meta: { requiresAuth: true } },
   { path: '/assistants', component: Assistant, meta: { requiresAuth: true } },
+  { path: '/notes', component: NotesList, meta: { requiresAuth: true } },
+  { path: '/notes/review', component: NoteReview, meta: { requiresAuth: true } },
+  { path: '/notes/:id', component: NoteEditor, meta: { requiresAuth: true } },
   { path: '/agents', component: Agent, meta: { requiresAuth: true } },
   { path: '/monitor', component: Monitor, meta: { requiresAuth: true } },
 ]
